@@ -516,6 +516,10 @@ func _build_sky() -> void:
 		globe.grid = on
 		_dirty())))
 	row = _row()
+	row.add_child(_grow(UI.toggle("Chunky map", globe.low_res, func(on: bool) -> void:
+		globe.low_res = on
+		_dirty())))
+	row = _row()
 	row.add_child(_grow(UI.toggle("Big pixels", globe.pixel > 1.0, func(on: bool) -> void:
 		globe.pixel = 3.0 if on else 1.0
 		_dirty())))
@@ -694,7 +698,7 @@ func _save() -> void:
 		"weather": w.save(),
 		"view": {
 			"night": globe.night, "city_lights": globe.city_lights, "aurora": globe.aurora,
-			"old_map": globe.old_map, "grid": globe.grid, "pixel": globe.pixel,
+			"old_map": globe.old_map, "grid": globe.grid, "pixel": globe.pixel, "low_res": globe.low_res,
 			"auto_spin": globe.auto_spin, "speed": globe.speed,
 			"show_route": globe.show_route, "show_names": globe.show_names,
 		},
@@ -725,6 +729,7 @@ func _load() -> void:
 		globe.old_map = v.get("old_map", globe.old_map)
 		globe.grid = v.get("grid", globe.grid)
 		globe.pixel = v.get("pixel", globe.pixel)
+		globe.low_res = v.get("low_res", globe.low_res)
 		globe.auto_spin = v.get("auto_spin", globe.auto_spin)
 		globe.speed = v.get("speed", globe.speed)
 		globe.show_route = v.get("show_route", globe.show_route)

@@ -65,4 +65,20 @@ func _run() -> void:
 	globe.zoom_by(2.0)
 	await _wait(1.0)
 	await _shot("08_night_europe")
+	# the aurora over Canada at night, from above and then edge-on at the top of the globe
+	globe.stops = []
+	globe.zoom_by(0.5)
+	globe.sim_time = Time.get_unix_time_from_datetime_string("2026-12-21T07:00:00")
+	globe.look_at_spot(62.0, -100.0, true)
+	await _wait(1.0)
+	await _shot("09_aurora_above")
+	globe.look_at_spot(15.0, -100.0, true)
+	await _wait(0.6)
+	await _shot("10_aurora_edge")
+	globe.low_res = true
+	globe.pixel = 3.0
+	globe.sim_time = Time.get_unix_time_from_datetime_string("2026-10-21T15:00:00")
+	globe.look_at_spot(30.0, -60.0, true)
+	await _wait(0.6)
+	await _shot("11_chunky")
 	quit()

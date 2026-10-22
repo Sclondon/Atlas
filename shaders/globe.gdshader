@@ -9,6 +9,10 @@ shader_type canvas_item;
 
 uniform sampler2D day_map : source_color, filter_linear, repeat_enable;
 uniform sampler2D night_map : source_color, filter_linear, repeat_enable;
+// The chunky look: Salmon Run 2's own 1024 map (and the lights to match), with hard-edged texels.
+uniform sampler2D day_low : source_color, filter_nearest, repeat_enable;
+uniform sampler2D night_low : source_color, filter_nearest, repeat_enable;
+uniform bool low_res = false;
 // Turns the Earth so the place of interest faces the viewer (camera-from-world).
 uniform mat3 view = mat3(1.0);
 // Size of the picture, where the middle of the globe is in it and how big it is, in pixels.
@@ -17,7 +21,12 @@ uniform vec2 center = vec2(200.0);
 uniform float globe_radius = 170.0;
 // How big the picture's pixels are drawn (1 for a smooth picture).
 uniform float pixel = 2.0;
-uniform vec3 space : source_color = vec3(0.012, 0.016, 0.045);
+uniform vec3 space : source_color = vec3(0.006, 0.008, 0.02);
+// The whole sky's stars (NASA's Deep Star Maps, in right ascension and declination), how bright
+// they are drawn, and how far the Earth has turned under them (Greenwich sidereal time, radians).
+uniform sampler2D star_map : source_color, filter_linear, repeat_enable;
+uniform float star_gain = 0.45;
+uniform float sky_turn = 0.0;
 uniform vec3 air : source_color = vec3(0.4, 0.75, 1.0);
 
 // Towards the sun, in the Earth's frame.
@@ -59,6 +68,14 @@ float noise(vec3 p) {
 			mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
 			mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
 			f.z);
+}
+
+vec4 day_at(vec2 uv) {
+	return low_res ? texture(day_low, uv) : texture(day_map, uv);
+}
+
+vec4 night_at(vec2 uv) {
+	return low_res ? texture(night_low, uv) : texture(night_map, uv);
 }
 
 vec2 map_uv(vec3 world) {
@@ -117,14 +134,14 @@ float cloud_at(vec3 world) {
 }
 
 float ocean_at(vec2 uv) {
-	vec3 c = texture(day_map, uv).rgb;
+	vec3 c = day_at(uv).rgb;
 	return smoothstep(0.02, 0.08, c.b - max(c.r, c.g * 0.9));
 }
 
 // The ground, as the old map draws it: parchment land, pale seas and an inked coast.
 vec3 parchment(vec2 uv, vec3 sat) {
 	float sea = ocean_at(uv);
-	float e = 1.2 / 2048.0;
+	float e = low_res ? 1.0 / 1024.0 : 1.2 / 2048.0;
 	float coast = abs(ocean_at(uv + vec2(e, 0.0)) - ocean_at(uv - vec2(e, 0.0)))
 			+ abs(ocean_at(uv + vec2(0.0, e)) - ocean_at(uv - vec2(0.0, e)));
 	float lum = dot(sat, vec3(0.3, 0.5, 0.2));
@@ -143,24 +160,66 @@ float graticule(vec3 world, float width) {
 	return 1.0 - smoothstep(width * 0.5, width, min(a, b));
 }
 
-// The northern and southern lights: a thin wavering ring of curtains round each magnetic pole,
-// streaked along its length, seen on the night side.
-float aurora_at(vec3 world) {
-	const vec3 POLE = vec3(-0.155, 0.986, 0.049);
-	vec3 pole = dot(world, POLE) >= 0.0 ? POLE : -POLE;
+// The northern and southern lights, as curtains standing up off the Earth: a thin wavering
+// ring round each magnetic pole, streaked with rays along its length. This is how dense the
+// curtain is at a direction from the middle of the Earth; aurora_glow gives it its height.
+const vec3 MAG_POLE = vec3(-0.155, 0.986, 0.049);
+// How high the curtains reach, with the Earth's radius as 1 (far taller than life, to be seen).
+const float AURORA_TOP = 0.13;
+
+float aurora_ring(vec3 dir) {
+	vec3 pole = dot(dir, MAG_POLE) >= 0.0 ? MAG_POLE : -MAG_POLE;
 	vec3 e1 = normalize(cross(pole, vec3(0.0, 0.0, 1.0)));
 	vec3 e2 = cross(pole, e1);
-	float around = atan(dot(world, e2), dot(world, e1));
-	float from_pole = acos(clamp(dot(world, pole), -1.0, 1.0));
-	// the ring snakes in and out, slowly
+	float around = atan(dot(dir, e2), dot(dir, e1));
+	float from_pole = acos(clamp(dot(dir, pole), -1.0, 1.0));
+	// the ring snakes in and out, slowly, and folds over on itself in places
 	vec2 ring = vec2(cos(around), sin(around));
-	float wave = (noise(vec3(ring * 2.5, TIME * 0.08)) - 0.5) * 0.12 + (noise(vec3(ring * 7.0, TIME * 0.15 + 4.0)) - 0.5) * 0.04;
-	float off = from_pole - 0.33 - wave;
-	// a sharp lower edge with a glow trailing off above it
-	float band = off < 0.0 ? exp(-off * off / 0.00025) : exp(-off / 0.035);
-	float streaks = noise(vec3(ring * 40.0, TIME * 0.5));
+	float wave = (noise(vec3(ring * 2.5, TIME * 0.08)) - 0.5) * 0.14 + (noise(vec3(ring * 8.0, TIME * 0.18 + 4.0)) - 0.5) * 0.05;
+	float off = (from_pole - 0.33 - wave) / 0.022;
+	float sheet = exp(-off * off);
+	// a second, fainter curtain a little poleward
+	float off2 = (from_pole - 0.29 - wave * 1.3) / 0.015;
+	sheet += 0.45 * exp(-off2 * off2);
+	float rays = noise(vec3(ring * 55.0, TIME * 0.6));
 	float bright = noise(vec3(ring * 3.0, TIME * 0.05 + 9.0));
-	return band * (0.35 + 0.65 * streaks) * smoothstep(0.25, 0.65, bright);
+	return sheet * (0.3 + 0.7 * rays * rays) * smoothstep(0.2, 0.6, bright);
+}
+
+// The aurora seen along this pixel's line of sight, marched through the shell the curtains
+// stand in: in front of the globe, and out past its edge into space. Green low down, going to
+// red and violet at the tops.
+vec3 aurora_glow(vec2 p, float r2, mat3 to_world, vec3 sun, float jitter) {
+	float top = 1.0 + AURORA_TOP;
+	if (r2 >= top * top) {
+		return vec3(0.0);
+	}
+	float z_near = sqrt(top * top - r2);
+	// (stopping at the ground where the line of sight meets it)
+	float z_far = r2 < 1.0 ? sqrt(1.0 - r2) : -z_near;
+	const int STEPS = 22;
+	float dz = (z_near - z_far) / float(STEPS);
+	vec3 glow = vec3(0.0);
+	for (int i = 0; i < STEPS; i++) {
+		float z = z_near - (float(i) + jitter) * dz;
+		vec3 at = to_world * vec3(p, z);
+		float r = length(at);
+		vec3 dir = at / r;
+		// only near the ring of either pole (a cheap test before the noise)
+		float dp = abs(dot(dir, MAG_POLE));
+		if (dp < 0.86 || dp > 0.99) {
+			continue;
+		}
+		float h = (r - 1.0) / AURORA_TOP;
+		// a sharp foot just above the ground and a long fade upward
+		float tall = smoothstep(0.04, 0.12, h) * exp(-max(h - 0.12, 0.0) * 2.6);
+		// (only in the dark: none at all when the whole globe is lit)
+		float dark = 1.0 - mix(1.0, smoothstep(-0.2, 0.08, dot(dir, sun)), night);
+		float d = aurora_ring(dir) * tall * dark;
+		vec3 tint = mix(vec3(0.15, 1.0, 0.45), vec3(0.85, 0.2, 0.55), smoothstep(0.35, 0.95, h));
+		glow += tint * d * dz;
+	}
+	return glow * 26.0;
 }
 
 void fragment() {
@@ -172,9 +231,21 @@ void fragment() {
 	mat3 to_world = transpose(view);
 	vec3 sun = normalize(sun_dir);
 	vec3 eye = to_world * vec3(0.0, 0.0, 1.0);
-	// space, with a scatter of stars that stay put as the globe turns
-	float star = hash(vec3(cell * pixel / 3.0, 7.0));
-	vec3 col = space + vec3(0.9, 0.95, 1.0) * step(0.9965, star) * (0.4 + 0.6 * hash(vec3(cell, 3.0)));
+	// space: the real sky behind the Earth (NASA's Deep Star Maps, as in Close Encounters), seen
+	// past the globe in the way the camera faces, turned by the Earth's sidereal time so the stars
+	// stand where they truly are over it. Going closer does not magnify them: they are far away.
+	vec2 q = (px - center) / (0.5 * min(rect_size.x, rect_size.y));
+	q.y = -q.y;
+	vec3 look = to_world * normalize(vec3(q * 0.9, -1.0));
+	float ra = atan(look.x, look.z) + sky_turn;
+	vec2 sky_uv = vec2(0.5 - ra / TAU, 0.5 - asin(clamp(look.y, -1.0, 1.0)) / PI);
+	// (darkened toward black between the stars, the bright ones brighter, and those twinkling)
+	vec3 field = pow(texture(star_map, sky_uv).rgb, vec3(2.6)) * 1.3;
+	float bright = max(field.r, max(field.g, field.b));
+	vec2 star_cell = floor(sky_uv * 2048.0);
+	float twinkle = 1.0 + smoothstep(0.35, 0.9, bright) * 0.45 * sin(TIME * (2.0 + hash(vec3(star_cell, 1.0)) * 7.0) + hash(vec3(star_cell, 3.0)) * 40.0);
+	// (kept well behind the Earth: the Milky Way a soft band, the stars points)
+	vec3 col = space + field * (star_gain + smoothstep(0.15, 0.6, bright) * 3.5) * twinkle;
 	if (r2 > 1.0) {
 		// outside the globe: the atmosphere fading out into space, brighter on the sunny side
 		vec3 edge = to_world * vec3(normalize(p), 0.0);
@@ -185,7 +256,7 @@ void fragment() {
 		vec3 cam = vec3(p, sqrt(1.0 - r2));
 		vec3 world = to_world * cam;
 		vec2 uv = map_uv(world);
-		vec3 sat = texture(day_map, uv).rgb;
+		vec3 sat = day_at(uv).rgb;
 		float l = dot(world, sun);
 		float day = mix(1.0, smoothstep(-0.12, 0.12, l), night);
 		// the clouds are up in the air, so their shadows fall away from the sun
@@ -202,7 +273,7 @@ void fragment() {
 		// the night side: dark, but for the lights of towns
 		// (by moonlight: dim and blue, but the shapes of the land still there)
 		vec3 dark = mix(sat * vec3(0.09, 0.11, 0.17) + vec3(0.0, 0.004, 0.012), ground * 0.32, old_map);
-		vec3 town = texture(night_map, uv).rgb;
+		vec3 town = night_at(uv).rgb;
 		float glow = smoothstep(0.12, 0.55, town.r) * city_lights * (1.0 - shadow * 0.8);
 		dark += vec3(1.0, 0.78, 0.42) * glow * 1.3 * (1.0 - old_map * 0.5);
 		ground = mix(dark, ground, day);
@@ -229,11 +300,10 @@ void fragment() {
 		float bolt = flash.w * exp(-zap * zap / 0.0012);
 		white += vec3(0.75, 0.82, 1.0) * bolt * 2.0;
 		col = mix(col, white, clamp(cloud + bolt * cloud * 0.5, 0.0, 1.0));
-		// aurora, glowing over the cloud tops on the night side
-		if (aurora > 0.0 && old_map < 1.0) {
-			float glow = aurora_at(world) * aurora * (1.0 - lit);
-			col += mix(vec3(0.2, 1.0, 0.5), vec3(0.8, 0.3, 0.7), smoothstep(0.6, 0.1, glow)) * glow * 0.7;
-		}
+	}
+	// the aurora's curtains, standing up off the night side (light, so they add on)
+	if (aurora > 0.0 && old_map < 1.0) {
+		col += aurora_glow(p, r2, to_world, sun, hash(vec3(cell, 11.0))) * aurora;
 	}
 	COLOR = vec4(col, 1.0);
 }

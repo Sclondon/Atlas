@@ -20,7 +20,12 @@ is real, so the night side moves across the globe as the clock runs.
   lights.
 - **Sky**: the sun's clock (time of day, day of the year, Pause / Real / Fast / Faster, Back
   to now), the night side and city lights on or off, an **Old map** look (parchment land,
-  pale seas, inked coasts), a latitude/longitude grid, big pixels, auto spin.
+  pale seas, inked coasts), a **Chunky map** (Salmon Run 2's 1024 map with hard-edged texels), a
+  latitude/longitude grid, big pixels, auto spin.
+
+Behind the Earth is the real sky: NASA's Deep Star Maps (as in Close Encounters), turned by
+Greenwich sidereal time so the stars stand where they truly are. The aurora is ray-marched: its
+curtains stand up off the night side and show against space past the edge of the globe.
 
 Everything is saved to `user://earth.json` (the browser's storage on the web) as it changes.
 
@@ -36,6 +41,8 @@ Everything is saved to `user://earth.json` (the browser's storage on the web) as
 - `shaders/globe.gdshader`: the whole Earth, drawn as a ray-traced sphere on a ColorRect
 - `textures/earth_day.jpg`: NASA Blue Marble (land_shallow_topo_2048), public domain
 - `textures/earth_night.jpg`: NASA Earth's City Lights, public domain
+- `textures/earth_day_low.png`, `earth_night_low.png`: the chunky maps (Salmon Run 2's 1024 Blue Marble)
+- `textures/starmap_nasa.jpg`: NASA Deep Star Maps 2020 (4K), public domain, from Close Encounters
 - `tests/shots.gd`: saves pictures of the main states:
   `godot --path . --audio-driver Dummy --resolution 390x844 -s tests/shots.gd -- --out=<folder>`
 - `tests/check_input.gd`: checks a drag turns the globe and a tap adds a stop:

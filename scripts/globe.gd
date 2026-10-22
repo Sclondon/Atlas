@@ -50,6 +50,8 @@ var aurora := true
 var old_map := false
 var grid := false
 var pixel := 2.0
+## Salmon Run 2's lower-resolution map, hard-edged (the chunky, chibi look).
+var low_res := false
 
 ## Where the middle of the view is looking (degrees), and how close.
 var view_lat := 25.0
@@ -95,6 +97,9 @@ func _ready() -> void:
 	_mat.shader = preload("res://shaders/globe.gdshader")
 	_mat.set_shader_parameter("day_map", preload("res://textures/earth_day.jpg"))
 	_mat.set_shader_parameter("night_map", preload("res://textures/earth_night.jpg"))
+	_mat.set_shader_parameter("day_low", preload("res://textures/earth_day_low.png"))
+	_mat.set_shader_parameter("night_low", preload("res://textures/earth_night_low.png"))
+	_mat.set_shader_parameter("star_map", preload("res://textures/starmap_nasa.jpg"))
 	_earth = ColorRect.new()
 	_earth.material = _mat
 	_earth.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -387,8 +392,10 @@ func _draw() -> void:
 	_mat.set_shader_parameter("center", _c)
 	_mat.set_shader_parameter("globe_radius", _r)
 	_mat.set_shader_parameter("pixel", pixel)
+	_mat.set_shader_parameter("low_res", low_res)
 	var sun := subsolar()
 	_mat.set_shader_parameter("sun_dir", Places.vec(sun.x, sun.y))
+	_mat.set_shader_parameter("sky_turn", sidereal())
 	_mat.set_shader_parameter("night", 1.0 if night else 0.0)
 	_mat.set_shader_parameter("city_lights", 1.0 if city_lights else 0.0)
 	_mat.set_shader_parameter("aurora", 1.0 if aurora else 0.0)
@@ -522,3 +529,10 @@ func _name(font: Font, at: Vector2, text: String) -> void:
 	var pos := at + Vector2(16.0 * ui_scale, -20.0 * ui_scale)
 	draw_string_outline(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, int(7.0 * ui_scale), UI.INK)
 	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+
+
+## How far the Earth has turned under the stars (Greenwich mean sidereal time, in radians), from
+## the clock: the right ascension overhead at longitude 0.
+func sidereal() -> float:
+	var days := sim_time / 86400.0 + 2440587.5 - 2451545.0
+	return deg_to_rad(fposmod(280.46061837 + 360.98564736629 * days, 360.0))
