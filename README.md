@@ -1,6 +1,6 @@
 # Atlas
 
-A Godot 4.7 (GL Compatibility) toy for the Scareathon arcade, built phone-first. The Earth
+A Godot 4.7 (GL Compatibility) toy, the Atlas cabinet on the Scareathon arcade, built phone-first. The Earth
 hangs in space: Salmon Run 2's globe (NASA's Blue Marble under drifting cloud and hurricanes,
 in big pixels) with Close Encounters' night side (the lights of towns) and rim of air. The sun
 is real, so the night side moves across the globe as the clock runs.
@@ -44,3 +44,9 @@ Everything is saved to `user://earth.json` (the browser's storage on the web) as
 ## Building
 
 `godot --headless --path . --export-release Web build/index.html`
+
+## Arcade
+
+The Atlas cabinet (a normal cart, no leaderboard) iframes `https://sclondon.github.io/Atlas/build/index.html`.
+Its preview film is recorded with `tests/attract.gd` under Movie Maker at 960x540 (put an `override.cfg`
+with those window sizes in the project while recording, then remove it).
