@@ -1,6 +1,6 @@
 extends SceneTree
 ## Saves pictures of the main states to check the look by eye:
-##   godot --path . --audio-driver Dummy --resolution 450x800 -s tools/shots.gd -- --out=<folder>
+##   godot --path . --audio-driver Dummy --resolution 450x800 -s tests/shots.gd -- --out=<folder>
 ## (it uses a fresh save of its own, so it shows what a new player sees)
 
 var out := "user://shots"

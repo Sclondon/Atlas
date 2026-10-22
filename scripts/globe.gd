@@ -62,6 +62,9 @@ var _zoom_to := 1.0
 var _target := Vector2.INF  # (longitude, latitude) being turned to, after look_at_spot
 var _spin := Vector2.ZERO  # degrees a second, (longitude, latitude), after a flick
 var _touches := {}
+var _ignored := {}  # fingers that went down on the panels
+## Says whether a point on the screen is over something laid on the globe (a panel, the bar).
+var blocked: Callable = func(_at: Vector2) -> bool: return false
 var _pinch := 0.0
 var _press_at := Vector2.ZERO
 var _press_time := 0
@@ -87,7 +90,7 @@ var _pins: Array[Vector2] = []  # where each stop's pin was drawn (Vector2.INF i
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	mouse_filter = Control.MOUSE_FILTER_STOP
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_mat = ShaderMaterial.new()
 	_mat.shader = preload("res://shaders/globe.gdshader")
 	_mat.set_shader_parameter("day_map", preload("res://textures/earth_day.jpg"))
@@ -127,32 +130,43 @@ func spot_at(screen: Vector2) -> Vector2:
 	return Places.lat_lon(world)
 
 
-func _gui_input(event: InputEvent) -> void:
+## Touches are read here rather than in _gui_input, so they reach the globe however the browser
+## delivers them: some phones (iPhone Chrome) lose the finger going down, so a drag or a lift
+## from a finger never seen pressing is taken up as if it had been. Fingers that go down on the
+## panels or the bar (see `blocked`) are left to them.
+func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		if event.pressed:
-			_touches[event.index] = event.position
-			if _touches.size() == 1:
-				_press_at = event.position
-				_press_time = Time.get_ticks_msec()
-				_dragged = false
-				_spin = Vector2.ZERO
-				_target = Vector2.INF
-			else:
-				_dragged = true
-				_pinch = _pinch_span()
+			if blocked.call(event.position):
+				_ignored[event.index] = true
+				return
+			_ignored.erase(event.index)
+			_press(event.index, event.position)
 		else:
+			if _ignored.has(event.index):
+				_ignored.erase(event.index)
+				return
+			var known: bool = _touches.has(event.index)
+			if not known and (_touches.size() > 0 or blocked.call(event.position)):
+				return
 			_touches.erase(event.index)
-			if _touches.is_empty() and not _dragged and Time.get_ticks_msec() - _press_time < 600:
+			# (a lift with no press seen is a tap too)
+			if _touches.is_empty() and not _dragged and (not known or Time.get_ticks_msec() - _press_time < 600):
 				_tap(event.position)
 			# flicked: keep turning, unless the finger had stopped before it was lifted
 			if Time.get_ticks_msec() - _last_drag > 80:
 				_spin = Vector2.ZERO
 			if _touches.size() == 1:
 				_pinch = 0.0
-		accept_event()
+			_dragged = _dragged and not _touches.is_empty()
 	elif event is InputEventScreenDrag:
-		if not _touches.has(event.index):
+		if _ignored.has(event.index):
 			return
+		if not _touches.has(event.index):
+			if blocked.call(event.position):
+				return
+			_press(event.index, event.position - event.relative)
+			_dragged = true
 		_touches[event.index] = event.position
 		if _touches.size() >= 2:
 			var span := _pinch_span()
@@ -170,17 +184,27 @@ func _gui_input(event: InputEvent) -> void:
 				var dt := maxf((Time.get_ticks_msec() - _last_drag) / 1000.0, 0.008)
 				_spin = _spin.lerp(turn / dt, 0.5)
 				_last_drag = Time.get_ticks_msec()
-		accept_event()
-	elif event is InputEventMouseButton and event.pressed:
+	elif event is InputEventMouseButton and event.pressed and not blocked.call(event.position):
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			zoom_by(1.12)
-			accept_event()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom_by(1.0 / 1.12)
-			accept_event()
 	elif event is InputEventMagnifyGesture:
 		zoom = clampf(zoom * event.factor, ZOOM_MIN, ZOOM_MAX)
 		_zoom_to = zoom
+
+
+func _press(index: int, at: Vector2) -> void:
+	_touches[index] = at
+	if _touches.size() == 1:
+		_press_at = at
+		_press_time = Time.get_ticks_msec()
+		_dragged = false
+		_spin = Vector2.ZERO
+		_target = Vector2.INF
+	else:
+		_dragged = true
+		_pinch = _pinch_span()
 
 
 func _unhandled_input(event: InputEvent) -> void:

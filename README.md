@@ -1,4 +1,4 @@
-# Earth Simulator
+# Atlas
 
 A Godot 4.7 (GL Compatibility) toy for the Scareathon arcade, built phone-first. The Earth
 hangs in space: Salmon Run 2's globe (NASA's Blue Marble under drifting cloud and hurricanes,
@@ -36,10 +36,10 @@ Everything is saved to `user://earth.json` (the browser's storage on the web) as
 - `shaders/globe.gdshader`: the whole Earth, drawn as a ray-traced sphere on a ColorRect
 - `textures/earth_day.jpg`: NASA Blue Marble (land_shallow_topo_2048), public domain
 - `textures/earth_night.jpg`: NASA Earth's City Lights, public domain
-- `tools/shots.gd`: saves pictures of the main states:
-  `godot --path . --audio-driver Dummy --resolution 390x844 -s tools/shots.gd -- --out=<folder>`
-- `tools/check_input.gd`: checks a drag turns the globe and a tap adds a stop:
-  `godot --headless --path . --audio-driver Dummy --resolution 450x800 -s tools/check_input.gd`
+- `tests/shots.gd`: saves pictures of the main states:
+  `godot --path . --audio-driver Dummy --resolution 390x844 -s tests/shots.gd -- --out=<folder>`
+- `tests/check_input.gd`: checks a drag turns the globe and a tap adds a stop:
+  `godot --headless --path . --audio-driver Dummy --resolution 450x800 -s tests/check_input.gd`
 
 ## Building
 

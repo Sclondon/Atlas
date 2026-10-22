@@ -1,5 +1,5 @@
 extends Control
-## Earth Simulator: the globe (globe.gd) with a bar of buttons along the bottom that open the
+## Atlas: the globe (globe.gd) with a bar of buttons along the bottom that open the
 ## panels: PLACES (your journeys and their stops), WEATHER (clouds, wind, hurricanes, lightning,
 ## aurora), SKY (the sun's clock and how the Earth is drawn), and GO, which plays the journey.
 ##
@@ -64,6 +64,8 @@ func _ready() -> void:
 	_build_overlay()
 	_build_sheet()
 	_build_bar()
+	globe.blocked = func(at: Vector2) -> bool:
+		return (_sheet.visible and _sheet.get_global_rect().has_point(at)) or _bar.get_global_rect().has_point(at)
 	_load()
 	_use_journey(current)
 	resized.connect(_layout)
@@ -75,7 +77,7 @@ func _ready() -> void:
 # ------------------------------------------------------------------ building the screen
 
 func _build_overlay() -> void:
-	_title = UI.label("EARTH SIMULATOR", 34, UI.GOLD)
+	_title = UI.label("ATLAS", 34, UI.GOLD)
 	_title.position = Vector2(22, 14)
 	add_child(_title)
 	_clock = UI.label("", 20, Color(UI.PAPER, 0.85), 6)

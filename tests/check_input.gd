@@ -1,7 +1,7 @@
 extends SceneTree
 ## Checks the globe's touch handling: a drag turns it, a tap in "+ Tap globe" mode adds a stop
 ## where it landed, and a tap on a pin picks it.
-##   godot --headless --path . --audio-driver Dummy -s tools/check_input.gd
+##   godot --headless --path . --audio-driver Dummy -s tests/check_input.gd
 
 
 func _initialize() -> void:
@@ -65,5 +65,33 @@ func _run() -> void:
 	if globe.stops.size() != before + 1 or absf(added.get("lat", 99.0) - 10.0) > 1.0 or absf(added.get("lon", 99.0) - 20.0) > 1.0:
 		fails += 1
 		print("FAIL: tap did not add a stop at the middle of the view")
+	# a tap on the panel is the panel's, not the globe's
+	before = globe.stops.size()
+	var on_panel: Vector2 = main._sheet.get_global_rect().get_center()
+	_touch(on_panel, true)
+	await process_frame
+	_touch(on_panel, false)
+	await process_frame
+	if globe.stops.size() != before:
+		fails += 1
+		print("FAIL: a tap on the panel added a stop")
+	main._close_sheet()
+	await create_timer(0.6).timeout
+	# a drag from a finger whose press never came (iPhone Chrome) still turns the globe
+	c = globe.area.get_center()
+	lon0 = globe.view_lon
+	for i in 6:
+		var e := InputEventScreenDrag.new()
+		e.index = 7
+		e.position = c + Vector2(10.0 * (i + 1), 0.0)
+		e.relative = Vector2(10.0, 0.0)
+		root.push_input(e, true)
+		await process_frame
+	_touch(c + Vector2(60.0, 0.0), false)
+	await process_frame
+	print("lost-press drag turned the view from %.1f to %.1f" % [lon0, globe.view_lon])
+	if not globe.view_lon < lon0 - 3.0:
+		fails += 1
+		print("FAIL: a drag with no press did not turn the globe")
 	print("ALL PASSED" if fails == 0 else "%d FAILED" % fails)
 	quit(fails)
