@@ -54,7 +54,9 @@ Everything is saved to `user://earth.json` (the browser's storage on the web) as
 - `textures/starmap_nasa.jpg`: NASA Deep Star Maps 2020 (4K), public domain, from Close Encounters
 - `tests/shots.gd`: saves pictures of the main states:
   `godot --path . --audio-driver Dummy --resolution 390x844 -s tests/shots.gd -- --out=<folder>`
-- `tests/trailer.gd`: the 10 second trailer with no words (Movie Maker at 1280x720 via a temporary
+- `tests/trailer.gd`: the 10 second trailer with no words, `-- --pics=<folder>` giving the journey's
+  photos (the cut used public-domain/CC0 Wikimedia Commons photos). Movie Maker at 1280x720 or
+  1080x1920 via a temporary
   `override.cfg`); the arcade preview is it scaled to 960x540. `media/` (not committed) holds the cut.
 - `scripts/photos.gd`: picking, shrinking, keeping and loading the player's photos
 - `tests/check_input.gd`: checks a drag turns the globe and a tap adds a stop:

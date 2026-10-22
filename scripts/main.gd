@@ -212,8 +212,8 @@ func _layout() -> void:
 	_subcaption.size = Vector2(cap_w, 0)
 	_hint.position = Vector2(globe_area.position.x + 30.0, 100)
 	_hint.size = Vector2(globe_area.size.x - 60.0, 0)
-	# the journey's polaroid: under the place's name, a third of the screen across
-	var pw := clampf(minf(globe_area.size.x, globe_area.size.y) * 0.42, 200.0, 360.0)
+	# the journey's polaroid: under the place's name, half the screen across
+	var pw := clampf(minf(globe_area.size.x, globe_area.size.y) * 0.56, 220.0, 440.0)
 	_polaroid_box.size = Vector2(pw, pw)
 	_polaroid_box.pivot_offset = _polaroid_box.size * 0.5
 	_polaroid_box.position = Vector2(globe_area.position.x + globe_area.size.x - pw - 24.0, 214.0)
