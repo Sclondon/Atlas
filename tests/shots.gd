@@ -3,6 +3,8 @@ extends SceneTree
 ##   godot --path . --audio-driver Dummy --resolution 450x800 -s tests/shots.gd -- --out=<folder>
 ## (it uses a fresh save of its own, so it shows what a new player sees)
 
+const Places := preload("res://scripts/places.gd")
+
 var out := "user://shots"
 
 
@@ -81,4 +83,40 @@ func _run() -> void:
 	globe.look_at_spot(30.0, -60.0, true)
 	await _wait(0.6)
 	await _shot("11_chunky")
+	globe.low_res = false
+	globe.pixel = 2.0
+	# a stop's card, with a stand-in photo (the moon map), then without one
+	DirAccess.make_dir_recursive_absolute("user://photos")
+	var img: Image = (load("res://textures/moon_lroc.jpg") as Texture2D).get_image()
+	img.save_jpg("user://photos/test.jpg")
+	main._toggle_play()
+	main._use_journey(0)
+	globe.stops[2]["photo"] = "user://photos/test.jpg"
+	globe.pin_tapped.emit(2)
+	await _wait(1.0)
+	await _shot("12_stop_card")
+	main._show_stop(3)
+	await _wait(1.0)
+	await _shot("13_stop_card_empty")
+	main._close_sheet()
+	# the journey stopping at the stop with a photo
+	globe.speed = 3.0
+	main._toggle_play()
+	while globe._done_legs < 2 or globe._moving:
+		await process_frame
+	await _wait(0.4)
+	await _shot("14_journey_photo")
+	main._toggle_play()
+	# the moon: in front of the Earth, then off to the side
+	var m: Vector3 = globe.moon_dir()
+	var at: Vector2 = Places.lat_lon(m)
+	globe.look_at_spot(at.x, at.y, true)
+	await _wait(0.5)
+	await _shot("15_moon_front")
+	globe.look_at_spot(at.x, at.y + 70.0, true)
+	await _wait(0.5)
+	await _shot("16_moon_side")
+	main._hide_ui(true)
+	await _wait(0.6)
+	await _shot("17_ui_hidden")
 	quit()

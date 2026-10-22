@@ -27,6 +27,13 @@ uniform vec3 space : source_color = vec3(0.006, 0.008, 0.02);
 uniform sampler2D star_map : source_color, filter_linear, repeat_enable;
 uniform float star_gain = 0.45;
 uniform float sky_turn = 0.0;
+// The moon: where it is (scaled in to be seen: see globe.gd), how big (the Earth is 1), its map,
+// and how deep in the Earth's shadow it is (a lunar eclipse).
+uniform float moon = 1.0;
+uniform vec3 moon_pos = vec3(0.0, 0.0, -2.0);
+uniform float moon_size = 0.273;
+uniform sampler2D moon_map : source_color, filter_linear, repeat_enable;
+uniform float moon_eclipse = 0.0;
 uniform vec3 air : source_color = vec3(0.4, 0.75, 1.0);
 
 // Towards the sun, in the Earth's frame.
@@ -45,7 +52,7 @@ uniform float cloud_opacity = 0.85;
 uniform float cloud_drift = 0.0;
 uniform float storm_turn = 0.0;
 // How far above the ground the clouds float: the radius of their sphere, with the Earth's as 1.
-uniform float cloud_height = 1.025;
+uniform float cloud_height = 1.06;
 // Hurricanes: the eye (a direction from the middle of the Earth) and the size in radians.
 uniform int storm_count = 0;
 uniform vec4 storms[6];
@@ -167,36 +174,44 @@ const vec3 MAG_POLE = vec3(-0.155, 0.986, 0.049);
 // How high the curtains reach, with the Earth's radius as 1 (far taller than life, to be seen).
 const float AURORA_TOP = 0.13;
 
-float aurora_ring(vec3 dir) {
+// `around` comes back as how far round the ring the point is (radians), for the pulses.
+float aurora_ring(vec3 dir, out float around) {
 	vec3 pole = dot(dir, MAG_POLE) >= 0.0 ? MAG_POLE : -MAG_POLE;
 	vec3 e1 = normalize(cross(pole, vec3(0.0, 0.0, 1.0)));
 	vec3 e2 = cross(pole, e1);
-	float around = atan(dot(dir, e2), dot(dir, e1));
+	around = atan(dot(dir, e2), dot(dir, e1));
 	float from_pole = acos(clamp(dot(dir, pole), -1.0, 1.0));
-	// the ring snakes in and out, slowly, and folds over on itself in places
+	// the ring snakes in and out and folds over on itself, with ripples running along it
 	vec2 ring = vec2(cos(around), sin(around));
-	float wave = (noise(vec3(ring * 2.5, TIME * 0.08)) - 0.5) * 0.14 + (noise(vec3(ring * 8.0, TIME * 0.18 + 4.0)) - 0.5) * 0.05;
+	float wave = (noise(vec3(ring * 2.5, TIME * 0.25)) - 0.5) * 0.14 + (noise(vec3(ring * 8.0, TIME * 0.6 + 4.0)) - 0.5) * 0.05
+			+ sin(around * 14.0 - TIME * 1.3) * 0.012;
 	float off = (from_pole - 0.33 - wave) / 0.022;
 	float sheet = exp(-off * off);
 	// a second, fainter curtain a little poleward
 	float off2 = (from_pole - 0.29 - wave * 1.3) / 0.015;
 	sheet += 0.45 * exp(-off2 * off2);
-	float rays = noise(vec3(ring * 55.0, TIME * 0.6));
-	float bright = noise(vec3(ring * 3.0, TIME * 0.05 + 9.0));
+	// rays that shimmer and drift along the curtain, and brightenings that come and go
+	vec2 drift = vec2(cos(around + TIME * 0.05), sin(around + TIME * 0.05));
+	float rays = noise(vec3(drift * 55.0, TIME * 2.2));
+	float bright = noise(vec3(ring * 3.0, TIME * 0.25 + 9.0));
 	return sheet * (0.3 + 0.7 * rays * rays) * smoothstep(0.2, 0.6, bright);
 }
 
 // The aurora seen along this pixel's line of sight, marched through the shell the curtains
 // stand in: in front of the globe, and out past its edge into space. Green low down, going to
 // red and violet at the tops.
-vec3 aurora_glow(vec2 p, float r2, mat3 to_world, vec3 sun, float jitter) {
+// `z_stop` is the nearest thing behind it on the line (the moon), or very far.
+vec3 aurora_glow(vec2 p, float r2, mat3 to_world, vec3 sun, float jitter, float z_stop) {
 	float top = 1.0 + AURORA_TOP;
 	if (r2 >= top * top) {
 		return vec3(0.0);
 	}
 	float z_near = sqrt(top * top - r2);
 	// (stopping at the ground where the line of sight meets it)
-	float z_far = r2 < 1.0 ? sqrt(1.0 - r2) : -z_near;
+	float z_far = max(r2 < 1.0 ? sqrt(1.0 - r2) : -z_near, z_stop);
+	if (z_far >= z_near) {
+		return vec3(0.0);
+	}
 	const int STEPS = 22;
 	float dz = (z_near - z_far) / float(STEPS);
 	vec3 glow = vec3(0.0);
@@ -215,7 +230,10 @@ vec3 aurora_glow(vec2 p, float r2, mat3 to_world, vec3 sun, float jitter) {
 		float tall = smoothstep(0.04, 0.12, h) * exp(-max(h - 0.12, 0.0) * 2.6);
 		// (only in the dark: none at all when the whole globe is lit)
 		float dark = 1.0 - mix(1.0, smoothstep(-0.2, 0.08, dot(dir, sun)), night);
-		float d = aurora_ring(dir) * tall * dark;
+		float around = 0.0;
+		float d = aurora_ring(dir, around) * tall * dark;
+		// pulses of light running up the curtains
+		d *= 0.65 + 0.35 * sin(h * 16.0 - TIME * 5.0 + around * 7.0);
 		vec3 tint = mix(vec3(0.15, 1.0, 0.45), vec3(0.85, 0.2, 0.55), smoothstep(0.35, 0.95, h));
 		glow += tint * d * dz;
 	}
@@ -260,7 +278,7 @@ void fragment() {
 		float l = dot(world, sun);
 		float day = mix(1.0, smoothstep(-0.12, 0.12, l), night);
 		// the clouds are up in the air, so their shadows fall away from the sun
-		float shadow = cloud_at(normalize(world * cloud_height + sun * (cloud_height - 1.0) * 2.0)) * cloud_opacity;
+		float shadow = cloud_at(normalize(world * cloud_height + sun * (cloud_height - 1.0))) * cloud_opacity;
 		vec3 ground = mix(sat, parchment(uv, sat), old_map);
 		ground *= 1.0 - 0.45 * shadow * day;
 		float light = mix(0.35 + 0.8 * clamp(l, 0.0, 1.0), 1.0, 1.0 - night);
@@ -301,9 +319,36 @@ void fragment() {
 		white += vec3(0.75, 0.82, 1.0) * bolt * 2.0;
 		col = mix(col, white, clamp(cloud + bolt * cloud * 0.5, 0.0, 1.0));
 	}
+	// the moon: a ball of its own (NASA's LRO map of it), its near side always turned to the
+	// Earth, lit by the same sun (so it has its phases) and dimmed red in the Earth's shadow. It
+	// goes behind the globe and in front of it as it goes round.
+	float z_moon = -1e6;
+	if (moon > 0.0) {
+		vec3 mc = view * moon_pos;
+		vec2 dm = p - mc.xy;
+		float d2 = dot(dm, dm);
+		float rr = moon_size * moon_size;
+		if (d2 < rr) {
+			float z = mc.z + sqrt(rr - d2);
+			// hidden where the Earth is in front of it
+			if (r2 >= 1.0 || z > sqrt(1.0 - r2)) {
+				z_moon = z;
+				vec3 n = to_world * (vec3(dm, sqrt(rr - d2)) / moon_size);
+				vec3 face = -normalize(moon_pos);
+				vec3 east = normalize(cross(-face, vec3(0.0, 1.0, 0.0)));
+				vec3 north = cross(face, east);
+				vec2 muv = vec2(0.5 + atan(dot(n, east), dot(n, face)) / TAU, 0.5 - asin(clamp(dot(n, north), -1.0, 1.0)) / PI);
+				vec3 rock = texture(moon_map, muv).rgb * 1.25;
+				// (a little earthshine on the dark part)
+				float sunlit = mix(1.0, clamp(dot(n, sun) * 1.4, 0.0, 1.0), night);
+				vec3 shade = rock * (0.09 + sunlit * mix(vec3(1.0), vec3(0.45, 0.12, 0.06), moon_eclipse));
+				col = mix(shade, col, smoothstep(rr * 0.92, rr, d2));
+			}
+		}
+	}
 	// the aurora's curtains, standing up off the night side (light, so they add on)
 	if (aurora > 0.0 && old_map < 1.0) {
-		col += aurora_glow(p, r2, to_world, sun, hash(vec3(cell, 11.0))) * aurora;
+		col += aurora_glow(p, r2, to_world, sun, hash(vec3(cell, 11.0)), z_moon) * aurora;
 	}
 	COLOR = vec4(col, 1.0);
 }

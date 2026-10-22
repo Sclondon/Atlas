@@ -23,6 +23,8 @@ const Weather := preload("res://scripts/weather.gd")
 const LINE := Color(0.85, 0.13, 0.1)
 const ZOOM_MIN := 0.55
 const ZOOM_MAX := 7.0
+## How far out the moon is drawn, in Earth radii.
+const MOON_DISTANCE := 1.55
 
 ## The stops, in order: each {"name", "lat", "lon"}.
 var stops: Array = []
@@ -47,6 +49,7 @@ var time_rate := 1.0
 var night := true
 var city_lights := true
 var aurora := true
+var moon := true
 var old_map := false
 var grid := false
 var pixel := 2.0
@@ -80,6 +83,7 @@ var _moving := false
 var _progress := 0.0
 var _hold := 0.0
 var _user_zoom := 1.0
+var _focus_from := -1.0  # the zoom to go back to after `focus`
 var _t := 0.0
 
 var _earth: ColorRect
@@ -100,6 +104,7 @@ func _ready() -> void:
 	_mat.set_shader_parameter("day_low", preload("res://textures/earth_day_low.png"))
 	_mat.set_shader_parameter("night_low", preload("res://textures/earth_night_low.png"))
 	_mat.set_shader_parameter("star_map", preload("res://textures/starmap_nasa.jpg"))
+	_mat.set_shader_parameter("moon_map", preload("res://textures/moon_lroc.jpg"))
 	_earth = ColorRect.new()
 	_earth.material = _mat
 	_earth.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -118,6 +123,21 @@ func look_at_spot(lat: float, lon: float, now := false) -> void:
 		view_lat = _target.y
 		view_lon = _target.x
 		_target = Vector2.INF
+
+
+## Turns to stop `i` and goes in close on it; `unfocus` goes back out to where it was.
+func focus(i: int) -> void:
+	highlight = i
+	look_at_spot(stops[i].lat, stops[i].lon)
+	if _focus_from < 0.0:
+		_focus_from = _zoom_to
+	_zoom_to = 3.2
+
+
+func unfocus() -> void:
+	if _focus_from > 0.0:
+		_zoom_to = _focus_from
+		_focus_from = -1.0
 
 
 func zoom_by(k: float) -> void:
@@ -302,7 +322,8 @@ func _advance(delta: float) -> void:
 	if _progress >= 1.0:
 		_moving = false
 		_done_legs += 1
-		_hold = 1.4
+		# (longer where there is a photo to look at)
+		_hold = 2.8 if str(stops[_done_legs].get("photo", "")) != "" else 1.4
 		arrived.emit(_done_legs)
 
 
@@ -368,15 +389,45 @@ func _keys(delta: float) -> void:
 		_target = Vector2.INF
 
 
-## Where the sun is overhead (degrees), from the clock: the season tilts it north and south
-## of the equator, and it goes round once a day.
+## Where the sun is overhead (degrees latitude, longitude), from the clock: its place on the
+## ecliptic (a low-precision almanac formula, good to a fraction of a degree), turned into the
+## Earth's frame by sidereal time.
 func subsolar() -> Vector2:
-	var d := Time.get_datetime_dict_from_unix_time(int(sim_time))
-	var day_of_year := float(Time.get_unix_time_from_datetime_dict({"year": d.year, "month": d.month, "day": d.day}) \
-			- Time.get_unix_time_from_datetime_dict({"year": d.year, "month": 1, "day": 1})) / 86400.0
-	var hours := fposmod(sim_time, 86400.0) / 3600.0
-	var tilt := 23.44 * sin(TAU * (day_of_year - 80.0) / 365.25)
-	return Vector2(tilt, wrapf(-(hours - 12.0) * 15.0, -180.0, 180.0))
+	var d := _days()
+	var mean := deg_to_rad(280.460 + 0.9856474 * d)
+	var anomaly := deg_to_rad(357.528 + 0.9856003 * d)
+	var lam := mean + deg_to_rad(1.915) * sin(anomaly) + deg_to_rad(0.020) * sin(2.0 * anomaly)
+	return _sky_to_earth(lam, 0.0)
+
+
+## Which way the moon is from the middle of the Earth (in the Earth's frame), from the clock: its
+## place on the sky by the same kind of formula (its main wobbles only).
+func moon_dir() -> Vector3:
+	var d := _days()
+	var mean := deg_to_rad(218.316 + 13.176396 * d)
+	var anomaly := deg_to_rad(134.963 + 13.064993 * d)
+	var node := deg_to_rad(93.272 + 13.229350 * d)
+	var lam := mean + deg_to_rad(6.289) * sin(anomaly)
+	var beta := deg_to_rad(5.128) * sin(node)
+	var at := _sky_to_earth(lam, beta)
+	return Places.vec(at.x, at.y)
+
+
+## Days since the J2000 epoch, from the clock.
+func _days() -> float:
+	return sim_time / 86400.0 + 2440587.5 - 2451545.0
+
+
+## A place on the ecliptic (longitude, latitude in radians) as the latitude and longitude on the
+## Earth it stands over now.
+func _sky_to_earth(lam: float, beta: float) -> Vector2:
+	var tilt := deg_to_rad(23.44)
+	var x := cos(beta) * cos(lam)
+	var y := cos(beta) * sin(lam)
+	var z := sin(beta)
+	var ra := atan2(y * cos(tilt) - z * sin(tilt), x)
+	var dec := asin(clampf(y * sin(tilt) + z * cos(tilt), -1.0, 1.0))
+	return Vector2(rad_to_deg(dec), wrapf(rad_to_deg(ra - sidereal()), -180.0, 180.0))
 
 
 func _draw() -> void:
@@ -394,7 +445,15 @@ func _draw() -> void:
 	_mat.set_shader_parameter("pixel", pixel)
 	_mat.set_shader_parameter("low_res", low_res)
 	var sun := subsolar()
-	_mat.set_shader_parameter("sun_dir", Places.vec(sun.x, sun.y))
+	var sun_v := Places.vec(sun.x, sun.y)
+	_mat.set_shader_parameter("sun_dir", sun_v)
+	# the moon, brought in to MOON_DISTANCE Earths away to be seen (it is really 60), and how far
+	# into the Earth's shadow it is: the real shadow, as wide as the moon is at the real distance
+	var m := moon_dir()
+	_mat.set_shader_parameter("moon", 1.0 if moon else 0.0)
+	_mat.set_shader_parameter("moon_pos", m * MOON_DISTANCE)
+	_mat.set_shader_parameter("moon_eclipse", 1.0 - smoothstep(0.008, 0.021, m.angle_to(-sun_v)))
+	_mat.set_shader_parameter("cloud_height", weather.height)
 	_mat.set_shader_parameter("sky_turn", sidereal())
 	_mat.set_shader_parameter("night", 1.0 if night else 0.0)
 	_mat.set_shader_parameter("city_lights", 1.0 if city_lights else 0.0)
@@ -454,10 +513,11 @@ func _leg(i: int, upto: float) -> Array:
 	var b := _vec(i + 1)
 	var angle := a.angle_to(b)
 	# lifted off the ground in an arc, like a flight, higher for the longer legs
-	var lift := 0.05 * minf(angle, 2.0)
+	var lift := 0.06 + 0.12 * minf(angle, 2.0)
 	var steps := clampi(int(angle * _r / 6.0), 10, 400)
 	var count := int(ceilf(steps * upto))
 	var run := PackedVector2Array()
+	var run_behind := false
 	var prev := Vector2.INF
 	var head := Vector2.INF
 	var dir := Vector2.RIGHT
@@ -465,27 +525,37 @@ func _leg(i: int, upto: float) -> Array:
 		var t := minf(float(s) / steps, upto)
 		var q := _m * (great_circle(a, b, t) * (1.006 + lift * sin(PI * t)))
 		var at := _c + Vector2(q.x, -q.y) * _r
-		# hidden only where the Earth is in front of it
+		# hidden only where the Earth is in front of it; where it arcs round the back of the
+		# world, over the horizon, it is drawn faded, so it reads as going away
 		var seen := q.z > 0.0 or Vector2(q.x, q.y).length_squared() > 1.0
-		if seen:
+		var behind := q.z < 0.0
+		if seen and (run.is_empty() or behind == run_behind):
 			run.append(at)
+		elif seen:
+			run.append(at)
+			_line(run, run_behind)
+			run = PackedVector2Array([at])
+		else:
+			_line(run, run_behind)
+			run = PackedVector2Array()
+		run_behind = behind
+		if seen:
 			if prev != Vector2.INF and at.distance_squared_to(prev) > 0.01:
 				dir = (at - prev).normalized()
 			head = at
 		else:
-			_line(run)
-			run = PackedVector2Array()
 			head = Vector2.INF
 		prev = at
-	_line(run)
+	_line(run, run_behind)
 	return [head, dir]
 
 
-func _line(run: PackedVector2Array) -> void:
+func _line(run: PackedVector2Array, faded := false) -> void:
 	if run.size() < 2:
 		return
-	draw_polyline(run, UI.INK, 9.0 * ui_scale, true)
-	draw_polyline(run, LINE, 5.0 * ui_scale, true)
+	var k := 0.35 if faded else 1.0
+	draw_polyline(run, Color(UI.INK, k), 9.0 * ui_scale, true)
+	draw_polyline(run, Color(LINE, k), 5.0 * ui_scale, true)
 
 
 ## A little plane at the head of the line, flying along it.

@@ -20,6 +20,9 @@ const ICONS := {
 	"x": "M6 4 L12 10 L18 4 L20 6 L14 12 L20 18 L18 20 L12 14 L6 20 L4 18 L10 12 L4 6 Z",
 	"play": "M7 4 L20 12 L7 20 Z",
 	"stop": "M6 6 L18 6 L18 18 L6 18 Z",
+	"left": "M5 12 L15 4 L15 20 Z",
+	"right": "M19 12 L9 4 L9 20 Z",
+	"eye": "M1 12 C5 4.5 19 4.5 23 12 C19 19.5 5 19.5 1 12 Z M12 7.5 A4.5 4.5 0 1 0 12 16.5 A4.5 4.5 0 1 0 12 7.5 Z M12 10 A2 2 0 1 1 12 14 A2 2 0 1 1 12 10 Z",
 }
 
 static var _font: Font
@@ -50,7 +53,7 @@ static func _weighted(path: String, weight: int) -> Font:
 static func icon(name: String, col := INK, px := 34) -> Texture2D:
 	var key := "%s/%s/%d" % [name, col.to_html(), px]
 	if not _icons.has(key):
-		var svg := '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 24 24"><path d="%s" fill="#%s"/></svg>' % [px, px, ICONS[name], col.to_html(false)]
+		var svg := '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 24 24"><path d="%s" fill="#%s" fill-rule="evenodd"/></svg>' % [px, px, ICONS[name], col.to_html(false)]
 		var img := Image.new()
 		img.load_svg_from_string(svg)
 		_icons[key] = ImageTexture.create_from_image(img)

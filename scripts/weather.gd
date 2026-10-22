@@ -12,6 +12,8 @@ var opacity := 0.85
 ## 0 still to 1 normal to 4 a gale (everything moves faster).
 var wind := 1.0
 var lightning := true
+## How high the cloud layer floats, with the Earth's radius as 1.
+var height := 1.06
 ## Each [latitude, longitude, size in radians].
 var storms: Array = []
 
@@ -101,13 +103,14 @@ func _lightning(delta: float) -> void:
 
 
 func save() -> Dictionary:
-	return {"cover": cover, "opacity": opacity, "wind": wind, "lightning": lightning, "storms": storms}
+	return {"cover": cover, "opacity": opacity, "wind": wind, "height": height, "lightning": lightning, "storms": storms}
 
 
 func load_from(d: Dictionary) -> void:
 	cover = d.get("cover", cover)
 	opacity = d.get("opacity", opacity)
 	wind = d.get("wind", wind)
+	height = d.get("height", height)
 	lightning = d.get("lightning", lightning)
 	storms = d.get("storms", storms).duplicate(true)
 

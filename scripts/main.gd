@@ -10,6 +10,7 @@ extends Control
 const UI := preload("res://scripts/ui_kit.gd")
 const Places := preload("res://scripts/places.gd")
 const Globe := preload("res://scripts/globe.gd")
+const Photos := preload("res://scripts/photos.gd")
 
 const SAVE := "user://earth.json"
 const DAYS := ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"]
@@ -18,6 +19,7 @@ const MONTHS := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", 
 const RATES := [["Pause", 0.0], ["Real", 1.0], ["Fast", 1800.0], ["Faster", 14400.0]]
 
 var globe: Globe
+var photos: Photos
 ## Each {"name", "stops": [{"name", "lat", "lon"}]}.
 var journeys: Array = []
 var current := 0
@@ -49,6 +51,12 @@ var _clock_big: Label
 var _hour_slider: HSlider
 var _day_slider: HSlider
 var _rate_buttons: Array[Button] = []
+# the stop whose card is open, the polaroid shown on arriving at a stop, and the UI hidden
+var _stop := -1
+var _polaroid_box: Control
+var _ui_hidden := false
+var _eye: Button
+var _show_ui: Button
 
 
 func _ready() -> void:
@@ -61,11 +69,17 @@ func _ready() -> void:
 	globe.arrived.connect(_on_arrived)
 	globe.leg_started.connect(_on_leg_started)
 	globe.journey_done.connect(_on_journey_done)
+	photos = Photos.new()
+	add_child(photos)
+	photos.picked.connect(_on_photo_picked)
 	_build_overlay()
 	_build_sheet()
 	_build_bar()
 	globe.blocked = func(at: Vector2) -> bool:
-		return (_sheet.visible and _sheet.get_global_rect().has_point(at)) or _bar.get_global_rect().has_point(at)
+		for c: Control in [_sheet, _bar, _show_ui]:
+			if c.visible and c.get_global_rect().has_point(at):
+				return true
+		return false
 	_load()
 	_use_journey(current)
 	resized.connect(_layout)
@@ -96,6 +110,11 @@ func _build_overlay() -> void:
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint.modulate.a = 0.0
 	add_child(_hint)
+	# the photo that pops up on arriving at a stop while the journey plays
+	_polaroid_box = Control.new()
+	_polaroid_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_polaroid_box.modulate.a = 0.0
+	add_child(_polaroid_box)
 
 
 func _build_bar() -> void:
@@ -118,6 +137,16 @@ func _build_bar() -> void:
 	_go.add_theme_color_override("font_color", Color.WHITE)
 	_go.add_theme_color_override("font_hover_color", Color.WHITE)
 	_bar.add_child(_go)
+	# hides everything but the Earth; the faint eye in the corner (or H) brings it back
+	_eye = UI.icon_button("eye", func() -> void: _hide_ui(true), Vector2(70, 84))
+	_bar.add_child(_eye)
+	_show_ui = UI.icon_button("eye", func() -> void: _hide_ui(false), Vector2(64, 56))
+	_show_ui.add_theme_stylebox_override("normal", UI.flat(Color(UI.NAVY, 0.5), Color(UI.PAPER, 0.4), 2, 10))
+	_show_ui.add_theme_stylebox_override("hover", UI.flat(Color(UI.NAVY, 0.8), UI.PAPER, 2, 10))
+	_show_ui.icon = UI.icon("eye", UI.PAPER)
+	_show_ui.modulate.a = 0.55
+	_show_ui.visible = false
+	add_child(_show_ui)
 
 
 func _build_sheet() -> void:
@@ -152,6 +181,9 @@ func _layout() -> void:
 	_bar.size = Vector2(minf(s.x - 28.0, 760.0), bar_h)
 	_bar.position.x = (s.x - _bar.size.x) * 0.5
 	var globe_area := Rect2(0, 80, s.x, bar_top - 80)
+	_show_ui.position = Vector2(s.x - 64.0 - 14.0, s.y - 56.0 - 14.0)
+	if _ui_hidden:
+		globe_area = Rect2(Vector2.ZERO, s)
 	if tall:
 		var h := clampf(s.y * 0.46, 380.0, 720.0)
 		_sheet.position = Vector2(10, bar_top - h - 10.0)
@@ -180,6 +212,11 @@ func _layout() -> void:
 	_subcaption.size = Vector2(cap_w, 0)
 	_hint.position = Vector2(globe_area.position.x + 30.0, 100)
 	_hint.size = Vector2(globe_area.size.x - 60.0, 0)
+	# the journey's polaroid: under the place's name, a third of the screen across
+	var pw := clampf(minf(globe_area.size.x, globe_area.size.y) * 0.42, 200.0, 360.0)
+	_polaroid_box.size = Vector2(pw, pw)
+	_polaroid_box.pivot_offset = _polaroid_box.size * 0.5
+	_polaroid_box.position = Vector2(globe_area.position.x + globe_area.size.x - pw - 24.0, 214.0)
 
 
 # ------------------------------------------------------------------ the panels
@@ -188,8 +225,7 @@ func _toggle_sheet(id: String) -> void:
 	if _open == id:
 		_close_sheet()
 		return
-	globe.stop()
-	_set_go()
+	_stop_journey()
 	_open = id
 	_catalogue = false
 	_set_mode("")
@@ -201,6 +237,9 @@ func _toggle_sheet(id: String) -> void:
 
 
 func _close_sheet() -> void:
+	if _open == "stop":
+		globe.unfocus()
+		_stop = -1
 	_open = ""
 	_sheet.visible = false
 	_set_mode("")
@@ -229,6 +268,132 @@ func _rebuild() -> void:
 		"sky":
 			_sheet_title.text = "Sky"
 			_build_sky()
+		"stop":
+			_sheet_title.text = globe.stops[_stop].name
+			_build_stop()
+
+
+# ---- a stop's card: where it is, and its photo
+
+## Opens stop `i`'s card: the globe goes in close on it, and the card shows its photo.
+func _show_stop(i: int) -> void:
+	if i < 0 or i >= globe.stops.size():
+		return
+	_stop_journey()
+	_set_mode("")
+	_catalogue = false
+	_open = "stop"
+	_stop = i
+	globe.focus(i)
+	_sheet.visible = true
+	for key: String in _bar_buttons:
+		(_bar_buttons[key] as Button).set_pressed_no_signal(false)
+	_rebuild()
+	_layout()
+
+
+func _build_stop() -> void:
+	var stop: Dictionary = globe.stops[_stop]
+	var path := str(stop.get("photo", ""))
+	var tex := photos.texture(path)
+	var frame := _polaroid(tex, "", _sheet.size.y * 0.5)
+	frame.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_body.add_child(frame)
+	_note("Stop %d of %d   ·   %s" % [_stop + 1, globe.stops.size(), Places.coords(stop.lat, stop.lon)], Color(UI.PAPER, 0.85))
+	var row := _row()
+	row.add_child(_grow(UI.button("Change photo" if tex != null else "Add a photo", photos.pick)))
+	if tex != null:
+		row.add_child(_grow(UI.button("Remove photo", func() -> void:
+			photos.forget(path)
+			stop.erase("photo")
+			_dirty()
+			_rebuild())))
+	row = _row()
+	var back := UI.icon_button("up", func() -> void: _show_stop(_stop - 1), Vector2(70, 58))
+	back.icon = UI.icon("left")
+	back.disabled = _stop == 0
+	row.add_child(back)
+	row.add_child(_grow(UI.button("All places", func() -> void:
+		globe.unfocus()
+		_open = ""
+		_toggle_sheet("places"))))
+	var next := UI.icon_button("up", func() -> void: _show_stop(_stop + 1), Vector2(70, 58))
+	next.icon = UI.icon("right")
+	next.disabled = _stop >= globe.stops.size() - 1
+	row.add_child(next)
+	if tex == null:
+		_note("Add a photo you took there: it shows here, and when the journey stops here. It stays on this device.")
+
+
+func _on_photo_picked(path: String) -> void:
+	if _open != "stop" or _stop < 0:
+		return
+	var stop: Dictionary = globe.stops[_stop]
+	var old := str(stop.get("photo", ""))
+	if old != "" and old != path:
+		photos.forget(old)
+	stop["photo"] = path
+	_dirty()
+	_rebuild()
+
+
+## A photo in a white border like a print, `tall` pixels high (or a blank print if there is none).
+func _polaroid(tex: Texture2D, caption: String, tall: float) -> PanelContainer:
+	var frame := PanelContainer.new()
+	var paper := UI.card(Color(0.98, 0.97, 0.93), Color(0.0, 0.0, 0.0, 0.0), 0, 3)
+	paper.content_margin_left = 12
+	paper.content_margin_right = 12
+	paper.content_margin_top = 12
+	paper.content_margin_bottom = 14 if caption == "" else 6
+	frame.add_theme_stylebox_override("panel", paper)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+	frame.add_child(col)
+	var aspect := 4.0 / 3.0
+	if tex != null:
+		aspect = float(tex.get_width()) / maxf(tex.get_height(), 1.0)
+	var w := minf(tall * aspect, size.x * 0.8)
+	if tex != null:
+		var pic := TextureRect.new()
+		pic.texture = tex
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.custom_minimum_size = Vector2(w, w / aspect)
+		pic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(pic)
+	else:
+		var blank := ColorRect.new()
+		blank.color = Color(0.86, 0.84, 0.78)
+		blank.custom_minimum_size = Vector2(w, w / aspect)
+		blank.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(blank)
+		var none := UI.label("No photo yet", 24, Color(UI.INK, 0.55), 0)
+		none.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		none.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		none.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		blank.add_child(none)
+	if caption != "":
+		var words := UI.label(caption, 22, UI.INK, 0)
+		words.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		words.clip_text = true
+		words.custom_minimum_size.x = w
+		col.add_child(words)
+	return frame
+
+
+# ---- hiding the UI
+
+func _hide_ui(hide: bool) -> void:
+	_ui_hidden = hide
+	if hide:
+		_close_sheet()
+	_bar.visible = not hide
+	_title.visible = not hide
+	_clock.visible = not hide
+	_hint.visible = not hide
+	_show_ui.visible = hide
+	_layout()
 
 
 func _row() -> HBoxContainer:
@@ -332,10 +497,7 @@ func _stop_row(i: int) -> void:
 	var stops: Array = _journey().stops
 	var stop: Dictionary = stops[i]
 	var row := _row()
-	var num := UI.button(str(i + 1), func() -> void:
-		globe.highlight = i
-		globe.look_at_spot(stop.lat, stop.lon)
-		_show_hint("%s\n%s" % [stop.name, Places.coords(stop.lat, stop.lon)], 2.5), Vector2(58, 58))
+	var num := UI.button(str(i + 1), func() -> void: _show_stop(i), Vector2(58, 58))
 	num.add_theme_stylebox_override("normal", UI.card(UI.GOLD, UI.INK, 2, 29))
 	num.add_theme_stylebox_override("hover", UI.card(UI.GOLD.lightened(0.2), UI.INK, 2, 29))
 	row.add_child(num)
@@ -457,6 +619,9 @@ func _build_weather() -> void:
 	_slider("Wind", 0.0, 4.0, w.wind, func(v: float) -> void:
 		w.wind = v
 		_dirty())
+	_slider("Cloud height", 1.01, 1.15, w.height, func(v: float) -> void:
+		w.height = v
+		_dirty())
 	_body.add_child(UI.label("Hurricanes: %d of %d" % [w.storms.size(), w.MAX_STORMS], 22, UI.PAPER, 0))
 	row = _row()
 	row.add_child(_grow(UI.toggle("+ Tap globe", _mode == "storm", func(on: bool) -> void: _set_mode("storm" if on else ""))))
@@ -507,6 +672,10 @@ func _build_sky() -> void:
 		_dirty())))
 	row.add_child(_grow(UI.toggle("City lights", globe.city_lights, func(on: bool) -> void:
 		globe.city_lights = on
+		_dirty())))
+	row = _row()
+	row.add_child(_grow(UI.toggle("Moon", globe.moon, func(on: bool) -> void:
+		globe.moon = on
 		_dirty())))
 	row = _row()
 	row.add_child(_grow(UI.toggle("Old map", globe.old_map, func(on: bool) -> void:
@@ -588,15 +757,21 @@ func _name_for(lat: float, lon: float) -> String:
 
 
 func _on_pin_tapped(i: int) -> void:
-	var s: Dictionary = globe.stops[i]
-	globe.highlight = i
-	_show_hint("%d. %s\n%s" % [i + 1, s.name, Places.coords(s.lat, s.lon)], 2.5)
+	_show_stop(i)
+
+
+## Stops the journey if it is playing, and clears its name and photo off the screen.
+func _stop_journey() -> void:
+	if globe.playing:
+		globe.stop()
+		_fade_caption()
+		_hide_polaroid()
+	_set_go()
 
 
 func _toggle_play() -> void:
 	if globe.playing:
-		globe.stop()
-		_fade_caption()
+		_stop_journey()
 	else:
 		if globe.stops.size() < 2:
 			_show_hint("A journey needs at least two stops. Add some under Places.", 2.5)
@@ -615,16 +790,43 @@ func _set_go() -> void:
 
 func _on_arrived(i: int) -> void:
 	_caption_text(globe.stops[i].name.to_upper(), "Stop %d of %d" % [i + 1, globe.stops.size()])
+	_show_polaroid(i)
 
 
 func _on_leg_started(i: int) -> void:
 	_caption_text(_caption.text, "to %s" % globe.stops[i + 1].name)
+	_hide_polaroid()
 
 
 func _on_journey_done() -> void:
 	_set_go()
 	_caption_text(_caption.text, "Journey's end")
 	_fade_caption(2.5)
+	_hide_polaroid(2.5)
+
+
+## The stop's photo, dropped in like a print tossed on the map, while the journey waits there.
+func _show_polaroid(i: int) -> void:
+	for child in _polaroid_box.get_children():
+		child.queue_free()
+	var tex := photos.texture(str(globe.stops[i].get("photo", "")))
+	if tex == null:
+		_polaroid_box.modulate.a = 0.0
+		return
+	var frame := _polaroid(tex, globe.stops[i].name, _polaroid_box.size.y * 0.72)
+	_polaroid_box.add_child(frame)
+	frame.reset_size()
+	frame.position = (_polaroid_box.size - frame.size) * 0.5
+	_polaroid_box.rotation = deg_to_rad(randf_range(-6.0, 6.0))
+	_polaroid_box.scale = Vector2.ONE * 1.25
+	_polaroid_box.modulate.a = 0.0
+	var t := create_tween().set_parallel().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	t.tween_property(_polaroid_box, "scale", Vector2.ONE, 0.35)
+	t.tween_property(_polaroid_box, "modulate:a", 1.0, 0.2)
+
+
+func _hide_polaroid(after := 0.0) -> void:
+	create_tween().tween_property(_polaroid_box, "modulate:a", 0.0, 0.3).set_delay(after)
 
 
 func _caption_text(text: String, sub: String) -> void:
@@ -680,6 +882,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_close_sheet()
 		elif globe.playing:
 			_toggle_play()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_H:
+		_hide_ui(not _ui_hidden)
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_SPACE:
 		_toggle_play()
 
@@ -697,7 +901,7 @@ func _save() -> void:
 		"current": current,
 		"weather": w.save(),
 		"view": {
-			"night": globe.night, "city_lights": globe.city_lights, "aurora": globe.aurora,
+			"night": globe.night, "city_lights": globe.city_lights, "aurora": globe.aurora, "moon": globe.moon,
 			"old_map": globe.old_map, "grid": globe.grid, "pixel": globe.pixel, "low_res": globe.low_res,
 			"auto_spin": globe.auto_spin, "speed": globe.speed,
 			"show_route": globe.show_route, "show_names": globe.show_names,
@@ -718,7 +922,10 @@ func _load() -> void:
 				var stops: Array = []
 				for s: Variant in j.get("stops", []):
 					if s is Dictionary and s.has("lat") and s.has("lon"):
-						stops.append({"name": str(s.get("name", "")), "lat": float(s.lat), "lon": float(s.lon)})
+						var stop := {"name": str(s.get("name", "")), "lat": float(s.lat), "lon": float(s.lon)}
+						if str(s.get("photo", "")) != "":
+							stop["photo"] = str(s.photo)
+						stops.append(stop)
 				journeys.append({"name": str(j.get("name", "Journey")), "stops": stops})
 		current = clampi(int(data.get("current", 0)), 0, journeys.size() - 1)
 		globe.weather.load_from(data.get("weather", {}))
@@ -726,6 +933,7 @@ func _load() -> void:
 		globe.night = v.get("night", globe.night)
 		globe.city_lights = v.get("city_lights", globe.city_lights)
 		globe.aurora = v.get("aurora", globe.aurora)
+		globe.moon = v.get("moon", globe.moon)
 		globe.old_map = v.get("old_map", globe.old_map)
 		globe.grid = v.get("grid", globe.grid)
 		globe.pixel = v.get("pixel", globe.pixel)

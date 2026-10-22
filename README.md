@@ -13,19 +13,28 @@ is real, so the night side moves across the globe as the clock runs.
   come with it (Raiders of the Lost Ark, Around the World in 80 Days, a haunted grand tour).
 - **GO**: plays the journey like the travel maps in Indiana Jones. The globe turns to each stop
   in turn while a red line draws itself across to the next behind a little plane, with the
-  place's name across the top.
+  place's name across the top. Where a stop has a photo, it drops in like a print while the
+  journey waits there. The arcs rise higher for longer legs; over the horizon they fade.
+- **Tap a pin**: the globe goes in close on it and its card opens, with your photo of the place
+  (**Add a photo** opens the phone's photo library, or a file picker on desktop; it is shrunk to
+  1280 px and kept on that device in `user://photos`). Arrows step to the next and previous stop.
 - **Weather**: presets (Clear, Fair, Stormy, Overcast), cloud cover, how strongly the cloud
-  layer is drawn (0 hides it), wind (drift speed of clouds and storms), hurricanes (tap the
+  layer is drawn (0 hides it), wind (drift speed of clouds and storms), cloud height, hurricanes (tap the
   globe to start one, or Random / None; up to 6), lightning, and the northern and southern
   lights.
 - **Sky**: the sun's clock (time of day, day of the year, Pause / Real / Fast / Faster, Back
   to now), the night side and city lights on or off, an **Old map** look (parchment land,
   pale seas, inked coasts), a **Chunky map** (Salmon Run 2's 1024 map with hard-edged texels), a
-  latitude/longitude grid, big pixels, auto spin.
+  latitude/longitude grid, big pixels, auto spin, and the **Moon**.
+- **The eye** at the end of the bar (or H) hides everything but the Earth; the faint eye in the
+  corner brings it back.
 
 Behind the Earth is the real sky: NASA's Deep Star Maps (as in Close Encounters), turned by
 Greenwich sidereal time so the stars stand where they truly are. The aurora is ray-marched: its
-curtains stand up off the night side and show against space past the edge of the globe.
+curtains stand up off the night side and show against space past the edge of the globe, and they
+ripple, shimmer and pulse. The moon is a ray-traced ball (NASA's LRO map, from Close Encounters)
+at its real place in the sky for the clock, near side to the Earth, with its phases and the
+Earth's shadow on it in an eclipse; it is drawn 1.55 Earths out rather than 60, to be seen.
 
 Everything is saved to `user://earth.json` (the browser's storage on the web) as it changes.
 
@@ -45,6 +54,9 @@ Everything is saved to `user://earth.json` (the browser's storage on the web) as
 - `textures/starmap_nasa.jpg`: NASA Deep Star Maps 2020 (4K), public domain, from Close Encounters
 - `tests/shots.gd`: saves pictures of the main states:
   `godot --path . --audio-driver Dummy --resolution 390x844 -s tests/shots.gd -- --out=<folder>`
+- `tests/trailer.gd`: the 10 second trailer with no words (Movie Maker at 1280x720 via a temporary
+  `override.cfg`); the arcade preview is it scaled to 960x540. `media/` (not committed) holds the cut.
+- `scripts/photos.gd`: picking, shrinking, keeping and loading the player's photos
 - `tests/check_input.gd`: checks a drag turns the globe and a tap adds a stop:
   `godot --headless --path . --audio-driver Dummy --resolution 450x800 -s tests/check_input.gd`
 
