@@ -21,10 +21,10 @@ const UI := preload("res://scripts/ui_kit.gd")
 const Places := preload("res://scripts/places.gd")
 const Weather := preload("res://scripts/weather.gd")
 const LINE := Color(0.85, 0.13, 0.1)
-const ZOOM_MIN := 0.55
+const ZOOM_MIN := 0.3
 const ZOOM_MAX := 7.0
 ## How far out the moon is drawn, in Earth radii.
-const MOON_DISTANCE := 1.55
+const MOON_DISTANCE := 3.2
 
 ## The stops, in order: each {"name", "lat", "lon"}.
 var stops: Array = []
@@ -50,6 +50,7 @@ var night := true
 var city_lights := true
 var aurora := true
 var moon := true
+var planets_on := true
 var old_map := false
 var grid := false
 var pixel := 2.0
@@ -418,6 +419,85 @@ func _days() -> float:
 	return sim_time / 86400.0 + 2440587.5 - 2451545.0
 
 
+## The planets' orbits (NASA JPL's "Approximate Positions of the Planets", good 1800-2050): for
+## each, a (AU), e, I, L, longitude of perihelion, longitude of the node (degrees), and how each
+## changes per century. The Earth (the Earth-moon barycentre) is the third.
+const ORBITS := [
+	[0.38709927, 0.20563593, 7.00497902, 252.25032350, 77.45779628, 48.33076593,
+		0.00000037, 0.00001906, -0.00594749, 149472.67411175, 0.16047689, -0.12534081],
+	[0.72333566, 0.00677672, 3.39467605, 181.97909950, 131.60246718, 76.67984255,
+		0.00000390, -0.00004107, -0.00078890, 58517.81538729, 0.00268329, -0.27769418],
+	[1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0,
+		0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0],
+	[1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891,
+		0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343],
+	[5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909,
+		-0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106],
+	[9.53667594, 0.05386179, 2.48599187, 49.95424423, 92.59887831, 113.66242448,
+		-0.00125060, -0.00050991, 0.00193609, 1222.49362201, -0.41897216, -0.28867794],
+	[19.18916464, 0.04725744, 0.77263783, 313.23810451, 170.95427630, 74.01692503,
+		-0.00196176, -0.00004397, -0.00242939, 428.48202785, 0.40805281, 0.04240589],
+	[30.06992276, 0.00859048, 1.77004347, -55.12002969, 44.96476227, 131.78422574,
+		0.00026291, 0.00005105, 0.00035372, 218.45945325, -0.32241464, -0.01262724],
+]
+## How big each planet is drawn in the sky (radians): far bigger than life, but in their order.
+const PLANET_SIZES := [0.018, 0.027, 0.022, 0.065, 0.055, 0.032, 0.031]
+
+
+## Where a planet is round the sun on the clock's date (AU, ecliptic: x to the spring equinox).
+func _orbit_position(i: int) -> Vector3:
+	var o: Array = ORBITS[i]
+	var cent := _days() / 36525.0
+	var a: float = o[0] + o[6] * cent
+	var e: float = o[1] + o[7] * cent
+	var tilt := deg_to_rad(o[2] + o[8] * cent)
+	var mean_lon := deg_to_rad(o[3] + o[9] * cent)
+	var peri := deg_to_rad(o[4] + o[10] * cent)
+	var node := deg_to_rad(o[5] + o[11] * cent)
+	var arg := peri - node
+	var anomaly := wrapf(mean_lon - peri, -PI, PI)
+	# Kepler's equation, by Newton's method
+	var ecc := anomaly + e * sin(anomaly)
+	for _n in 6:
+		ecc -= (ecc - e * sin(ecc) - anomaly) / (1.0 - e * cos(ecc))
+	var px := a * (cos(ecc) - e)
+	var py := a * sqrt(1.0 - e * e) * sin(ecc)
+	var cw := cos(arg)
+	var sw := sin(arg)
+	var cn := cos(node)
+	var sn := sin(node)
+	var ci := cos(tilt)
+	return Vector3(
+		(cw * cn - sw * sn * ci) * px + (-sw * cn - cw * sn * ci) * py,
+		(cw * sn + sw * cn * ci) * px + (-sw * sn + cw * cn * ci) * py,
+		(sw * sin(tilt)) * px + (cw * sin(tilt)) * py)
+
+
+## A direction given in the ecliptic frame, as a direction in the Earth's own frame now.
+func _ecliptic_to_earth(v: Vector3) -> Vector3:
+	var at := _sky_to_earth(atan2(v.y, v.x), asin(clampf(v.z / maxf(v.length(), 1e-9), -1.0, 1.0)))
+	return Places.vec(at.x, at.y)
+
+
+## Each planet's direction from the Earth (with how big it is drawn) and the sun's direction
+## from it, for the shader.
+func planets() -> Array:
+	var earth := _orbit_position(2)
+	var dirs := PackedVector4Array()
+	var suns := PackedVector4Array()
+	var k := 0
+	for i in ORBITS.size():
+		if i == 2:
+			continue
+		var p := _orbit_position(i)
+		var d := _ecliptic_to_earth(p - earth)
+		var s := _ecliptic_to_earth(-p)
+		dirs.append(Vector4(d.x, d.y, d.z, PLANET_SIZES[k]))
+		suns.append(Vector4(s.x, s.y, s.z, 0.0))
+		k += 1
+	return [dirs, suns]
+
+
 ## A place on the ecliptic (longitude, latitude in radians) as the latitude and longitude on the
 ## Earth it stands over now.
 func _sky_to_earth(lam: float, beta: float) -> Vector2:
@@ -453,6 +533,13 @@ func _draw() -> void:
 	_mat.set_shader_parameter("moon", 1.0 if moon else 0.0)
 	_mat.set_shader_parameter("moon_pos", m * MOON_DISTANCE)
 	_mat.set_shader_parameter("moon_eclipse", 1.0 - smoothstep(0.008, 0.021, m.angle_to(-sun_v)))
+	_mat.set_shader_parameter("planets_on", 1.0 if planets_on else 0.0)
+	if planets_on:
+		var ps := planets()
+		_mat.set_shader_parameter("planet_dir", ps[0])
+		_mat.set_shader_parameter("planet_sun", ps[1])
+		# (Saturn's north pole points to right ascension 40.6, declination 83.5)
+		_mat.set_shader_parameter("saturn_pole", Places.vec(83.54, wrapf(40.59 - rad_to_deg(sidereal()), -180.0, 180.0)))
 	_mat.set_shader_parameter("cloud_height", weather.height)
 	_mat.set_shader_parameter("sky_turn", sidereal())
 	_mat.set_shader_parameter("night", 1.0 if night else 0.0)

@@ -34,6 +34,17 @@ uniform vec3 moon_pos = vec3(0.0, 0.0, -2.0);
 uniform float moon_size = 0.273;
 uniform sampler2D moon_map : source_color, filter_linear, repeat_enable;
 uniform float moon_eclipse = 0.0;
+// The sun and the planets, in the sky at their true places for the clock (see globe.gd planets):
+// for each of Mercury, Venus, Mars, Jupiter, Saturn, Uranus and Neptune, which way it is from
+// the Earth and how big it is drawn (an angle, far bigger than life, to be seen), and which way
+// the sun is from it (for its phase).
+uniform float planets_on = 1.0;
+uniform vec4 planet_dir[7];
+uniform vec4 planet_sun[7];
+// Saturn's pole (its rings lie round its equator), in the Earth's frame.
+uniform vec3 saturn_pole = vec3(0.0, 1.0, 0.0);
+// How big the sun is drawn (radians; it is really 0.0047).
+const float SUN_SIZE = 0.085;
 uniform vec3 air : source_color = vec3(0.4, 0.75, 1.0);
 
 // Towards the sun, in the Earth's frame.
@@ -240,6 +251,64 @@ vec3 aurora_glow(vec2 p, float r2, mat3 to_world, vec3 sun, float jitter, float 
 	return glow * 26.0;
 }
 
+// A planet seen against the sky in the direction `look`, laid over `col`: a little ball lit from
+// the sun's side (so it has a phase), Jupiter banded and Saturn ringed.
+vec3 planet_over(vec3 col, vec3 look, int k, vec4 pd, vec3 to_sun) {
+	float c = dot(look, pd.xyz);
+	if (c <= 0.0) {
+		return col;
+	}
+	vec3 perp = look - pd.xyz * c;
+	if (length(perp) > pd.w * 2.4) {
+		return col;
+	}
+	// the planet's own little frame: across, up (celestial north), and towards it from the Earth
+	vec3 across = normalize(cross(pd.xyz, vec3(0.0, 1.0, 0.0)) + vec3(0.0001, 0.0, 0.0));
+	vec3 up = cross(across, pd.xyz);
+	vec2 v = vec2(dot(perp, across), dot(perp, up)) / pd.w;
+	float d2 = dot(v, v);
+	float t_surface = d2 < 1.0 ? -sqrt(1.0 - d2) : 1e6;
+	if (d2 < 1.0) {
+		vec3 n = normalize(across * v.x + up * v.y + pd.xyz * t_surface);
+		float lat = dot(n, vec3(0.0, 1.0, 0.0));
+		vec3 body = vec3(0.6, 0.58, 0.55);
+		if (k == 1) {
+			body = vec3(0.96, 0.9, 0.72);
+		} else if (k == 2) {
+			body = mix(vec3(0.82, 0.38, 0.18), vec3(0.55, 0.25, 0.14), smoothstep(0.45, 0.7, noise(n * 4.0 + 3.0)));
+			body = mix(body, vec3(0.95), smoothstep(0.82, 0.9, abs(lat)));
+		} else if (k == 3) {
+			body = mix(vec3(0.9, 0.8, 0.65), vec3(0.68, 0.48, 0.32), 0.5 + 0.5 * sin(lat * 24.0 + noise(n * 6.0) * 2.0));
+		} else if (k == 4) {
+			body = mix(vec3(0.93, 0.84, 0.6), vec3(0.8, 0.7, 0.5), 0.5 + 0.5 * sin(lat * 16.0));
+		} else if (k == 5) {
+			body = vec3(0.62, 0.86, 0.9);
+		} else if (k == 6) {
+			body = vec3(0.32, 0.47, 0.95);
+		}
+		float lit = 0.04 + 0.96 * clamp(dot(n, to_sun) * 1.2, 0.0, 1.0);
+		col = mix(col, body * lit * 1.15, smoothstep(1.0, 0.82, d2));
+	}
+	// Saturn's rings: where the line of sight crosses its equator's plane, between 1.3 and 2.2
+	// of its radii out, and not hidden behind the planet
+	if (k == 4) {
+		vec3 axis = saturn_pole;
+		float tilt = dot(pd.xyz, axis);
+		// (opened up to at least this much, to be seen: in 2025 they were edge-on to us)
+		tilt = sign(tilt) * max(abs(tilt), 0.3);
+		if (abs(tilt) > 0.0) {
+			vec3 flat_v = across * v.x + up * v.y;
+			float t = -dot(flat_v, axis) / tilt;
+			float rr = length(flat_v + pd.xyz * t);
+			if (rr > 1.3 && rr < 2.2 && t < t_surface) {
+				float band = 0.75 + 0.25 * sin(rr * 30.0);
+				col = mix(col, vec3(0.88, 0.8, 0.62) * band, 0.85 * smoothstep(1.3, 1.4, rr) * smoothstep(2.2, 2.05, rr));
+			}
+		}
+	}
+	return col;
+}
+
 void fragment() {
 	vec2 cell = floor(UV * rect_size / pixel);
 	vec2 px = (cell + 0.5) * pixel;
@@ -264,6 +333,18 @@ void fragment() {
 	float twinkle = 1.0 + smoothstep(0.35, 0.9, bright) * 0.45 * sin(TIME * (2.0 + hash(vec3(star_cell, 1.0)) * 7.0) + hash(vec3(star_cell, 3.0)) * 40.0);
 	// (kept well behind the Earth: the Milky Way a soft band, the stars points)
 	vec3 col = space + field * (star_gain + smoothstep(0.15, 0.6, bright) * 3.5) * twinkle;
+	// the sun: a white-hot disc in a wide glow that drowns the stars round it (no glare when the
+	// whole globe is lit as day)
+	float sun_off = acos(clamp(dot(look, sun), -1.0, 1.0));
+	col *= 1.0 - smoothstep(0.5, 0.0, sun_off) * 0.85 * night;
+	col += vec3(1.0, 0.84, 0.58) * (exp(-sun_off * sun_off / 0.025) * 0.9 + exp(-sun_off / 0.16) * 0.3) * night;
+	col = mix(col, vec3(1.0, 0.97, 0.88) * (1.2 - 0.3 * pow(sun_off / SUN_SIZE, 2.0)), smoothstep(SUN_SIZE, SUN_SIZE * 0.9, sun_off));
+	// the planets
+	if (planets_on > 0.0) {
+		for (int i = 0; i < 7; i++) {
+			col = planet_over(col, look, i, planet_dir[i], planet_sun[i].xyz);
+		}
+	}
 	if (r2 > 1.0) {
 		// outside the globe: the atmosphere fading out into space, brighter on the sunny side
 		vec3 edge = to_world * vec3(normalize(p), 0.0);

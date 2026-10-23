@@ -34,7 +34,13 @@ Greenwich sidereal time so the stars stand where they truly are. The aurora is r
 curtains stand up off the night side and show against space past the edge of the globe, and they
 ripple, shimmer and pulse. The moon is a ray-traced ball (NASA's LRO map, from Close Encounters)
 at its real place in the sky for the clock, near side to the Earth, with its phases and the
-Earth's shadow on it in an eclipse; it is drawn 1.55 Earths out rather than 60, to be seen.
+Earth's shadow on it in an eclipse; it is drawn 3.2 Earths out rather than 60, to be seen (zoom out to find it).
+The sun and planets are in the sky at their true places for the clock (NASA JPL's approximate
+orbits), drawn far bigger than life: the sun with its glare, Venus and Mercury showing their
+phases (or crossing the sun's face as dark discs), banded Jupiter, Saturn with its rings round
+its real pole (opened up a little to be seen), red Mars, Uranus and Neptune. **Planets** in Sky
+turns them off. `tests/check_sky.gd` prints their places for a date, to check against an almanac;
+`tests/shots_sky.gd` takes pictures of them.
 
 Everything is saved to `user://earth.json` (the browser's storage on the web) as it changes.
 

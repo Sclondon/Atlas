@@ -677,6 +677,9 @@ func _build_sky() -> void:
 	row.add_child(_grow(UI.toggle("Moon", globe.moon, func(on: bool) -> void:
 		globe.moon = on
 		_dirty())))
+	row.add_child(_grow(UI.toggle("Planets", globe.planets_on, func(on: bool) -> void:
+		globe.planets_on = on
+		_dirty())))
 	row = _row()
 	row.add_child(_grow(UI.toggle("Old map", globe.old_map, func(on: bool) -> void:
 		globe.old_map = on
@@ -901,7 +904,7 @@ func _save() -> void:
 		"current": current,
 		"weather": w.save(),
 		"view": {
-			"night": globe.night, "city_lights": globe.city_lights, "aurora": globe.aurora, "moon": globe.moon,
+			"night": globe.night, "city_lights": globe.city_lights, "aurora": globe.aurora, "moon": globe.moon, "planets": globe.planets_on,
 			"old_map": globe.old_map, "grid": globe.grid, "pixel": globe.pixel, "low_res": globe.low_res,
 			"auto_spin": globe.auto_spin, "speed": globe.speed,
 			"show_route": globe.show_route, "show_names": globe.show_names,
@@ -934,6 +937,7 @@ func _load() -> void:
 		globe.city_lights = v.get("city_lights", globe.city_lights)
 		globe.aurora = v.get("aurora", globe.aurora)
 		globe.moon = v.get("moon", globe.moon)
+		globe.planets_on = v.get("planets", globe.planets_on)
 		globe.old_map = v.get("old_map", globe.old_map)
 		globe.grid = v.get("grid", globe.grid)
 		globe.pixel = v.get("pixel", globe.pixel)
