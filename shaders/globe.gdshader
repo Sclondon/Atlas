@@ -309,6 +309,32 @@ vec3 planet_over(vec3 col, vec3 look, int k, vec4 pd, vec3 to_sun) {
 	return col;
 }
 
+// The moon: a ball of its own (NASA's LRO map of it), its near side always turned to the Earth,
+// lit by the same sun (so it has its phases) and dimmed red in the Earth's shadow. This is its
+// colour at the point `p` and how much of the pixel it covers (0 off it), and in `z` how near its
+// face is there.
+vec4 moon_at(vec2 p, mat3 view_m, mat3 to_world, vec3 sun, out float z) {
+	z = -1e6;
+	vec3 mc = view_m * moon_pos;
+	vec2 dm = p - mc.xy;
+	float d2 = dot(dm, dm);
+	float rr = moon_size * moon_size;
+	if (d2 >= rr) {
+		return vec4(0.0);
+	}
+	z = mc.z + sqrt(rr - d2);
+	vec3 n = to_world * (vec3(dm, sqrt(rr - d2)) / moon_size);
+	vec3 face = -normalize(moon_pos);
+	vec3 east = normalize(cross(-face, vec3(0.0, 1.0, 0.0)));
+	vec3 north = cross(face, east);
+	vec2 muv = vec2(0.5 + atan(dot(n, east), dot(n, face)) / TAU, 0.5 - asin(clamp(dot(n, north), -1.0, 1.0)) / PI);
+	vec3 rock = texture(moon_map, muv).rgb * 1.25;
+	// (a little earthshine on the dark part)
+	float sunlit = mix(1.0, clamp(dot(n, sun) * 1.4, 0.0, 1.0), night);
+	vec3 shade = rock * (0.09 + sunlit * mix(vec3(1.0), vec3(0.45, 0.12, 0.06), moon_eclipse));
+	return vec4(shade, smoothstep(rr, rr * 0.92, d2));
+}
+
 void fragment() {
 	vec2 cell = floor(UV * rect_size / pixel);
 	vec2 px = (cell + 0.5) * pixel;
@@ -344,6 +370,14 @@ void fragment() {
 		for (int i = 0; i < 7; i++) {
 			col = planet_over(col, look, i, planet_dir[i], planet_sun[i].xyz);
 		}
+	}
+	// the moon, when it is round the far side of the Earth: part of the background, so the globe,
+	// its rim of air, its clouds and its aurora all pass in front of it
+	float moon_z = -1e6;
+	vec4 moon_px = moon > 0.0 ? moon_at(p, view, to_world, sun, moon_z) : vec4(0.0);
+	bool moon_near = (view * moon_pos).z >= 0.0;
+	if (!moon_near) {
+		col = mix(col, moon_px.rgb, moon_px.a);
 	}
 	if (r2 > 1.0) {
 		// outside the globe: the atmosphere fading out into space, brighter on the sunny side
@@ -400,32 +434,12 @@ void fragment() {
 		white += vec3(0.75, 0.82, 1.0) * bolt * 2.0;
 		col = mix(col, white, clamp(cloud + bolt * cloud * 0.5, 0.0, 1.0));
 	}
-	// the moon: a ball of its own (NASA's LRO map of it), its near side always turned to the
-	// Earth, lit by the same sun (so it has its phases) and dimmed red in the Earth's shadow. It
-	// goes behind the globe and in front of it as it goes round.
+	// the moon on the near side of the Earth: in front of its air and clouds, but hidden where
+	// the globe itself is nearer
 	float z_moon = -1e6;
-	if (moon > 0.0) {
-		vec3 mc = view * moon_pos;
-		vec2 dm = p - mc.xy;
-		float d2 = dot(dm, dm);
-		float rr = moon_size * moon_size;
-		if (d2 < rr) {
-			float z = mc.z + sqrt(rr - d2);
-			// hidden where the Earth is in front of it
-			if (r2 >= 1.0 || z > sqrt(1.0 - r2)) {
-				z_moon = z;
-				vec3 n = to_world * (vec3(dm, sqrt(rr - d2)) / moon_size);
-				vec3 face = -normalize(moon_pos);
-				vec3 east = normalize(cross(-face, vec3(0.0, 1.0, 0.0)));
-				vec3 north = cross(face, east);
-				vec2 muv = vec2(0.5 + atan(dot(n, east), dot(n, face)) / TAU, 0.5 - asin(clamp(dot(n, north), -1.0, 1.0)) / PI);
-				vec3 rock = texture(moon_map, muv).rgb * 1.25;
-				// (a little earthshine on the dark part)
-				float sunlit = mix(1.0, clamp(dot(n, sun) * 1.4, 0.0, 1.0), night);
-				vec3 shade = rock * (0.09 + sunlit * mix(vec3(1.0), vec3(0.45, 0.12, 0.06), moon_eclipse));
-				col = mix(shade, col, smoothstep(rr * 0.92, rr, d2));
-			}
-		}
+	if (moon_near && moon_px.a > 0.0 && (r2 >= 1.0 || moon_z > sqrt(1.0 - r2))) {
+		col = mix(col, moon_px.rgb, moon_px.a);
+		z_moon = moon_z;
 	}
 	// the aurora's curtains, standing up off the night side (light, so they add on)
 	if (aurora > 0.0 && old_map < 1.0) {
